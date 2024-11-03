@@ -16,10 +16,7 @@
 #include <Eigen/Dense>
 #include <onnxruntime/core/session/onnxruntime_cxx_api.h>
 #include <unsupported/Eigen/CXX11/Tensor>
-
 #include "demucs.hpp"
-// this is the model model baked into a header file
-#include "htdemucs.ort.h"
 
 static std::tuple<int, int>
 symmetric_zero_padding(Eigen::MatrixXf &padded, const Eigen::MatrixXf &original,

@@ -107,19 +107,21 @@ static void write_audio_file(const Eigen::MatrixXf &waveform,
 
 int main(int argc, const char **argv)
 {
-    if (argc != 3)
+    if (argc != 4)
     {
-        std::cerr << "Usage: " << argv[0] << " <wav file> <out dir>"
+        std::cerr << "Usage: " << argv[0] << " <model file> <wav file> <out dir>"
                   << std::endl;
         exit(1);
     }
 
     std::cout << "demucs.onnx Main driver program" << std::endl;
+    std::string model_file = argv[1];
+
     // load audio passed as argument
-    std::string wav_file = argv[1];
+    std::string wav_file = argv[2];
 
     // output dir passed as argument
-    std::string out_dir = argv[2];
+    std::string out_dir = argv[3];
 
     // Check if the output directory exists, and create it if not
     std::filesystem::path output_dir_path(out_dir);
@@ -156,7 +158,7 @@ int main(int argc, const char **argv)
                   << progress * 100.0f << "%) " << log_message << std::endl;
     };
 
-    Ort::Session model = demucsonnx::load_model();
+    Ort::Session model = demucsonnx::load_model(model_file);
 
     // create 4 audio matrix same size, to hold output
     Eigen::Tensor3dXf audio_targets =

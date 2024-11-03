@@ -64,7 +64,7 @@ struct demucs_segment_buffers
           xt_out(1, nb_sources * nb_channels, segment_samples){};
 };
 
-Ort::Session load_model();
+Ort::Session load_model(const std::string htdemucs_model_path);
 
 const float SEGMENT_LEN_SECS = 7.8;      // 8 seconds, the demucs chunk size
 const float SEGMENT_OVERLAP_SECS = 0.25; // 0.25 overlap

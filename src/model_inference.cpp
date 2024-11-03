@@ -16,20 +16,17 @@
 #include <Eigen/Dense>
 #include <onnxruntime/core/session/onnxruntime_cxx_api.h>
 #include <unsupported/Eigen/CXX11/Tensor>
-
 #include "demucs.hpp"
-// this is the model model baked into a header file
-#include "htdemucs.ort.h"
 
-Ort::Session demucsonnx::load_model() {
+Ort::Session demucsonnx::load_model(const std::string htdemucs_model_path) {
     // Initialize ONNX Runtime environment
     Ort::Env env(ORT_LOGGING_LEVEL_WARNING, "demucs_onnx");
 
     // Set session options (use defaults)
     Ort::SessionOptions session_options;
 
-    // Create the ONNX Runtime session from the in-memory ORT model
-    Ort::Session session(env, htdemucs_ort_start, htdemucs_ort_size, session_options);
+    // Create the ONNX Runtime session from the model file
+    Ort::Session session(env, htdemucs_model_path.c_str(), session_options);
 
     return session;
 }

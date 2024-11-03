@@ -1,0 +1,33 @@
+name: tests
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v2
+    - uses: actions/setup-python@v2
+      with:
+        python-version: 3.7
+
+    - uses: actions/cache@v2
+      with:
+        path: env
+        key: env-${{ hashFiles('**/requirements.txt') }}
+
+    - name: Install dependencies
+      run: |
+        sudo apt-get install -y ffmpeg
+        python3 -m venv env
+        . env/bin/activate
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+
+    - name: Run separation test
+      run: |
+        . env/bin/activate
+        make test_eval

@@ -337,7 +337,6 @@ void demucsonnx::model_inference(
                   << buffers.z.dimension(1) << ", " << buffers.z.dimension(2)
                   << std::endl;
 
-
         // print shape of x_out_onnx which is 5d
         std::cout << "x_out_onnx: " << buffers.x_out_onnx.dimension(0) << ", "
                   << buffers.x_out_onnx.dimension(1) << ", "

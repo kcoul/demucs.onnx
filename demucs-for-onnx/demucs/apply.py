@@ -18,9 +18,10 @@ import tqdm
 
 from .demucs import Demucs
 from .hdemucs import HDemucs
+from .htdemucs import HTDemucs, standalone_ispec, standalone_magnitude, standalone_mask, standalone_spec
 from .utils import center_trim, DummyPoolExecutor
 
-Model = tp.Union[Demucs, HDemucs]
+Model = tp.Union[Demucs, HDemucs, HTDemucs]
 
 
 class BagOfModels(nn.Module):
@@ -237,6 +238,35 @@ def apply_model(model, mix, shifts=1, split=True,
             valid_length = length
         mix = tensor_chunk(mix)
         padded_mix = mix.padded(valid_length).to(device)
+
+        # now that we chopped up demucs to remove the stft/istft
+        # from the model itself, we need to do that before and after
+        # the inference
         with th.no_grad():
-            out = model(padded_mix)
+            training_length = int(model.segment * model.samplerate)
+            # this is the padding previously done in the model
+            padded_padded_mix = F.pad(padded_mix, (0, training_length - padded_mix.shape[-1]))
+            magspec = standalone_magnitude(standalone_spec(padded_padded_mix))
+            out_x, out_xt = model(padded_mix, magspec)
+
+            # post-steps to apply
+            #zout = self._mask(z, x)
+            #if self.use_train_segment:
+            #    if self.training:
+            #        x = self._ispec(zout, length)
+            #    else:
+            #        x = self._ispec(zout, training_length)
+            #else:
+            #    x = self._ispec(zout, length)
+            #x = xt + x
+            #if length_pre_pad:
+            #    x = x[..., :length_pre_pad]
+            #return x
+
+            zout = standalone_mask(magspec, out_x)
+            out = standalone_ispec(zout, training_length)
+
+            out = out_xt + out
+            out = out[..., :valid_length]
+
         return center_trim(out, length)

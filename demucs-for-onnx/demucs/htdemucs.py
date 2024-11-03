@@ -58,6 +58,35 @@ def standalone_magnitude(z, cac=True):
     return m
 
 
+def standalone_ispec(z, length=None, scale=0, hop_length=4096//4):
+    hl = hop_length // (4**scale)
+    z = F.pad(z, (0, 0, 0, 1))
+    z = F.pad(z, (2, 2))
+    pad = hl // 2 * 3
+    le = hl * int(math.ceil(length / hl)) + 2 * pad
+    x = ispectro(z, hl, length=le)
+    x = x[..., pad: pad + length]
+    return x
+
+
+def standalone_mask(z, m, cac=True, wiener_iters=0, training=False, end_iters=0):
+    # Apply masking given the mixture spectrogram `z` and the estimated mask `m`.
+    # If `cac` is True, `m` is actually a full spectrogram and `z` is ignored.
+    niters = wiener_iters
+    if cac:
+        B, S, C, Fr, T = m.shape
+        out = m.view(B, S, -1, 2, Fr, T).permute(0, 1, 2, 4, 5, 3)
+        out = torch.view_as_complex(out.contiguous())
+        return out
+    if training:
+        niters = end_iters
+    if niters < 0:
+        z = z[:, None]
+        return z / (1e-8 + z.abs()) * m
+    #else:
+    #    return self._wiener(m, z, niters)
+
+
 class HTDemucs(nn.Module):
     """
     Spectrogram and hybrid Demucs model.
@@ -662,15 +691,6 @@ class HTDemucs(nn.Module):
         x = x.view(B, S, -1, Fq, T)
         x = x * std[:, None] + mean[:, None]
 
-        #zout = self._mask(z, x)
-        #if self.use_train_segment:
-        #    if self.training:
-        #        x = self._ispec(zout, length)
-        #    else:
-        #        x = self._ispec(zout, training_length)
-        #else:
-        #    x = self._ispec(zout, length)
-
         if self.use_train_segment:
             if self.training:
                 xt = xt.view(B, S, -1, length)
@@ -682,6 +702,16 @@ class HTDemucs(nn.Module):
 
         # again, skipping the istft step for outside of the network
         return x, xt
+
+        #zout = self._mask(z, x)
+        #if self.use_train_segment:
+        #    if self.training:
+        #        x = self._ispec(zout, length)
+        #    else:
+        #        x = self._ispec(zout, training_length)
+        #else:
+        #    x = self._ispec(zout, length)
+
 
         #x = xt + x
         #if length_pre_pad:

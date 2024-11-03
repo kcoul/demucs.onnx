@@ -2,6 +2,7 @@
 
 import sys
 import torch
+from torch.nn import functional as F
 import argparse
 from pathlib import Path
 from demucs.pretrained import get_model
@@ -64,6 +65,16 @@ if __name__ == '__main__':
 
     # Prepare a dummy input tensor
     dummy_waveform = torch.randn(1, 2, 343980)
+
+    # pre-pad the dummy_waveform since we removed padding from NN itself
+    #        training_length = int(self.segment * self.samplerate)
+    #        if mix.shape[-1] < training_length:
+    #            length_pre_pad = mix.shape[-1]
+    #            mix = F.pad(mix, (0, training_length - length_pre_pad))
+
+    training_length = int(core_model.segment * core_model.samplerate)
+    dummy_waveform = F.pad(dummy_waveform, (0, training_length - dummy_waveform.shape[-1]))
+
     magspec = standalone_magnitude(standalone_spec(dummy_waveform))
 
     dummy_input = (dummy_waveform, magspec)

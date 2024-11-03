@@ -212,6 +212,11 @@ void demucsonnx::model_inference(
     // let's get a stereo complex spectrogram first
     demucsonnx::stft(stft_buf);
 
+    // print the shape of stft_buf.spec
+    std::cout << "stft_buf.spec: " << stft_buf.spec.dimension(0) << ", "
+              << stft_buf.spec.dimension(1) << ", " << stft_buf.spec.dimension(2)
+              << std::endl;
+
     // remove 2: 2 + le of stft
     // same behavior as _spec in the python apply.py code
     buffers.z = stft_buf.spec.slice(
@@ -319,13 +324,19 @@ void demucsonnx::model_inference(
     // undo complex-as-channels by splitting the 2nd dim of x_4d into (2, 2)
     for (int source = 0; source < nb_out_sources; ++source)
     {
-        Eigen::Tensor3dXcf x_target = Eigen::Tensor3dXcf(
+        Eigen::Tensor3dXcf z_target = Eigen::Tensor3dXcf(
             2, buffers.x.dimension(1), buffers.x.dimension(2));
 
-        // print shape of x_target
-        std::cout << "x_target: " << x_target.dimension(0) << ", "
-                  << x_target.dimension(1) << ", " << x_target.dimension(2)
+        // print shape of z_target
+        std::cout << "z_target: " << z_target.dimension(0) << ", "
+                  << z_target.dimension(1) << ", " << z_target.dimension(2)
                   << std::endl;
+
+        // print shape of z
+        std::cout << "z: " << buffers.z.dimension(0) << ", "
+                  << buffers.z.dimension(1) << ", " << buffers.z.dimension(2)
+                  << std::endl;
+
 
         // print shape of x_out_onnx which is 5d
         std::cout << "x_out_onnx: " << buffers.x_out_onnx.dimension(0) << ", "
@@ -333,11 +344,6 @@ void demucsonnx::model_inference(
                   << buffers.x_out_onnx.dimension(2) << ", "
                   << buffers.x_out_onnx.dimension(3) << ", "
                   << buffers.x_out_onnx.dimension(4) << std::endl;
-
-        // print shape of z
-        std::cout << "z: " << buffers.z.dimension(0) << ", "
-                  << buffers.z.dimension(1) << ", " << buffers.z.dimension(2)
-                  << std::endl;
 
         // in the CaC case, we're simply unstacking the complex
         // spectrogram from the channel dimension
@@ -350,14 +356,14 @@ void demucsonnx::model_inference(
                 {
                     // buffers.x(2*i, j, k) = buffers.z(i, j, k).real();
                     // buffers.x(2*i + 1, j, k) = buffers.z(i, j, k).imag();
-                    x_target(i, j, k) =
+                    z_target(i, j, k) =
                         std::complex<float>(buffers.x_out_onnx(0, source, 2 * i, j, k),
                                             buffers.x_out_onnx(0, source, 2 * i + 1, j, k));
                 }
             }
         }
 
-        std::cout << "copied x_out_onnx into x_target" << std::endl;
+        std::cout << "copied x_out_onnx into z_target" << std::endl;
 
         // need to re-pad 2: 2 + le on spectrogram
         // opposite of this
@@ -366,27 +372,53 @@ void demucsonnx::model_inference(
         //         (int)stft_buf.spec.dimension(2) - 4});
         // Add padding to spectrogram
 
+        // print shape of z_target
+        std::cout << "z_target: " << z_target.dimension(0) << ", "
+                  << z_target.dimension(1) << ", " << z_target.dimension(2)
+                  << std::endl;
+
         Eigen::array<std::pair<int, int>, 3> paddings = {
             std::make_pair(0, 0), std::make_pair(0, 1), std::make_pair(2, 2)};
-        Eigen::Tensor3dXcf x_target_padded =
-            x_target.pad(paddings, std::complex<float>(0.0f, 0.0f));
+        Eigen::Tensor3dXcf z_target_padded =
+            z_target.pad(paddings, std::complex<float>(0.0f, 0.0f));
 
-        stft_buf.spec = x_target_padded;
+        // print shape of z_target_padded
+        std::cout << "z_target_padded: " << z_target_padded.dimension(0) << ", "
+                  << z_target_padded.dimension(1) << ", " << z_target_padded.dimension(2)
+                  << std::endl;
+
+        // print shape of stft_buf.spec
+        std::cout << "stft_buf.spec: " << stft_buf.spec.dimension(0) << ", "
+                  << stft_buf.spec.dimension(1) << ", " << stft_buf.spec.dimension(2)
+                  << std::endl;
+
+        stft_buf.spec = z_target_padded;
+
+        // print shape of stft_buf.spec
+        std::cout << "stft_buf.spec: " << stft_buf.spec.dimension(0) << ", "
+                  << stft_buf.spec.dimension(1) << ", " << stft_buf.spec.dimension(2)
+                  << std::endl;
 
         demucsonnx::istft(stft_buf);
+
+        std::cout << "istft completed" << std::endl;
 
         // now we have waveform from istft(x), the frequency branch
         // that we need to sum with xt, the time branch
         Eigen::MatrixXf padded_waveform = stft_buf.waveform;
+
+        std::cout << "padded_waveform: " << padded_waveform.rows() << ", "
+                  << padded_waveform.cols() << std::endl;
 
         // undo the reflect pad 1d by copying padded_mix into mix
         // from range buffers.pad:buffers.pad + buffers.segment_samples
         Eigen::MatrixXf unpadded_waveform =
             padded_waveform.block(0, buffers.pad, 2, buffers.segment_samples);
 
+        std::cout << "unpadded_waveform: " << unpadded_waveform.rows() << ", "
+                << unpadded_waveform.cols() << std::endl;
+
         // sum with xt
-        // choose a different source to sum with in case
-        // they're in different orders...
         unpadded_waveform += xt_3d[source];
 
         ss << "mix: " << buffers.mix.rows() << ", " << buffers.mix.cols();

@@ -561,16 +561,16 @@ class HTDemucs(nn.Module):
     # supply the cac stft with the time-domain waveform as input
     # skip stft/istft in the network itself
     def forward(self, mix, x):
-        length = mix.shape[-1]
-        length_pre_pad = None
-        if self.use_train_segment:
-            if self.training:
-                self.segment = Fraction(mix.shape[-1], self.samplerate)
-            else:
-                training_length = int(self.segment * self.samplerate)
-                if mix.shape[-1] < training_length:
-                    length_pre_pad = mix.shape[-1]
-                    mix = F.pad(mix, (0, training_length - length_pre_pad))
+        #length = mix.shape[-1]
+        #length_pre_pad = None
+        #if self.use_train_segment:
+        #    if self.training:
+        #        self.segment = Fraction(mix.shape[-1], self.samplerate)
+        #    else:
+        #        if mix.shape[-1] < training_length:
+        #            length_pre_pad = mix.shape[-1]
+        #            mix = F.pad(mix, (0, training_length - length_pre_pad))
+        training_length = int(self.segment * self.samplerate)
 
         #z = self._spec(mix)
         #mag = self._magnitude(z)

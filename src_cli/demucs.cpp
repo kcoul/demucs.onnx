@@ -166,7 +166,7 @@ int main(int argc, const char **argv)
 
     out_targets = audio_targets;
 
-    const int nb_out_sources = 6;
+    const int nb_out_sources = 4;
 
     for (int target = 0; target < nb_out_sources; ++target)
     {

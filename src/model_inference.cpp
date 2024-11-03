@@ -20,7 +20,7 @@
 
 Ort::Session demucsonnx::load_model(const std::string htdemucs_model_path) {
     // Initialize ONNX Runtime environment
-    Ort::Env env(ORT_LOGGING_LEVEL_WARNING, "demucs_onnx");
+    static Ort::Env env(ORT_LOGGING_LEVEL_WARNING, "demucs_onnx");
 
     // Set session options (use defaults)
     Ort::SessionOptions session_options;
@@ -58,41 +58,84 @@ static void reflect_padding(Eigen::MatrixXf &padded_mix,
     }
 }
 
-// Helper function to convert a ColMajor Eigen Tensor to RowMajor ONNX tensor
-static Ort::Value ConvertColMajorToONNX(const Eigen::Tensor3dXf &col_tensor, Ort::MemoryInfo &memory_info) {
-    // Flatten Eigen tensor in column-major order and convert to row-major layout in 1D vector
-    std::vector<float> row_major_data(col_tensor.size());
-    Eigen::Tensor3dRowMajorXf row_tensor = col_tensor.swap_layout();  // Swap to RowMajor layout
-    std::memcpy(row_major_data.data(), row_tensor.data(), row_tensor.size() * sizeof(float));
+static Ort::Value ConvertColMajorToONNX(const Eigen::Tensor<float, 3, Eigen::ColMajor> &col_tensor,
+                                        Ort::MemoryInfo &memory_info,
+                                        const std::vector<int64_t>& shape) {
+    // Calculate the total size
+    size_t size = col_tensor.size();
 
-    // Define shape based on the dimensions of the input tensor
-    std::vector<int64_t> shape = {1, col_tensor.dimension(0), col_tensor.dimension(1), col_tensor.dimension(2)};
+    // Ensure that the size matches the product of the shape dimensions
+    size_t expected_size = 1;
+    for (auto dim : shape) {
+        expected_size *= dim;
+    }
+    if (size != expected_size) {
+        throw std::runtime_error("Size mismatch between tensor data and shape.");
+    }
+
+    // Swap layout to RowMajor
+    Eigen::Tensor3dRowMajorXf row_tensor = col_tensor.swap_layout();
+    // reverse the order of the dimensions after Eigen swap_layout
+    Eigen::array<int, 3> shuffle_dims = {2, 1, 0};
+    Eigen::Tensor3dRowMajorXf row_tensor_shuf = row_tensor.shuffle(shuffle_dims);
+
+    // Copy data to a contiguous vector
+    std::vector<float> row_major_data(size);
+    std::memcpy(row_major_data.data(), row_tensor_shuf.data(), size * sizeof(float));
 
     // Create and return the ONNX Runtime tensor
-    return Ort::Value::CreateTensor<float>(memory_info, row_major_data.data(), row_major_data.size(), shape.data(), shape.size());
+    return Ort::Value::CreateTensor<float>(memory_info,
+                                           row_major_data.data(),
+                                           size,
+                                           shape.data(),
+                                           shape.size());
 }
 
-// Helper function to convert ONNX RowMajor tensor output back to Eigen ColMajor tensor
-static Eigen::Tensor3dXf ConvertONNXToColMajor(Ort::Value &value, const Eigen::Tensor3dXf::Dimensions &dims) {
-    // Retrieve data from ONNX tensor, which is row-major
-    const float* output_data = value.GetTensorMutableData<float>();
+template <int Rank>
+static Eigen::Tensor<float, Rank, Eigen::ColMajor> ConvertONNXToColMajor(
+    Ort::Value &value,
+    const std::vector<int64_t>& shape)
+{
+    // Ensure shape has the expected rank
+    if (shape.size() != Rank) {
+        throw std::runtime_error("Shape rank does not match expected rank.");
+    }
+
+    // Map the ONNX tensor to an Eigen tensor with the appropriate dimensions
+    Eigen::array<Eigen::Index, Rank> dims;
+    for (int i = 0; i < Rank; ++i) {
+        dims[i] = static_cast<Eigen::Index>(shape[i]);
+    }
 
     // Map to Eigen row-major tensor
-    Eigen::TensorMap<Eigen::Tensor<const float, 3, Eigen::RowMajor>> row_tensor_map(output_data, dims[0], dims[1], dims[2]);
+    const float* output_data = value.GetTensorMutableData<float>();
+    Eigen::TensorMap<Eigen::Tensor<const float, Rank, Eigen::RowMajor>> row_tensor_map(output_data, dims);
 
-    // Convert to column-major tensor
-    Eigen::Tensor3dXf col_tensor(dims);
-    col_tensor = row_tensor_map.swap_layout();  // Swap layout to ColMajor
-    return col_tensor;
+    // shuffle dims to reverse order after swap_layout
+    Eigen::array<int, Rank> shuffle_dims;
+    for (int i = 0; i < Rank; ++i) {
+        shuffle_dims[i] = Rank - 1 - i;
+    }
+
+    // Swap layout to ColMajor
+    return row_tensor_map.swap_layout().shuffle(shuffle_dims);
 }
 
-static void RunONNXInferenceWithColToRow(Ort::Session &model, const Eigen::Tensor3dXf &x, const Eigen::Tensor3dXf &xt, Eigen::Tensor3dXf &x_out, Eigen::Tensor3dXf &xt_out) {
+void RunONNXInferenceWithColToRow(Ort::Session &model,
+                                  const Eigen::Tensor3dXf &x,
+                                  const Eigen::Tensor3dXf &xt,
+                                  Eigen::Tensor5dXf &x_out_onnx,
+                                  Eigen::Tensor4dXf &xt_out_onnx) {
     Ort::AllocatorWithDefaultOptions allocator;
     Ort::MemoryInfo memory_info = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
 
-    // Prepare ONNX input tensors by converting ColMajor to RowMajor
-    Ort::Value x_tensor = ConvertColMajorToONNX(x, memory_info);
-    Ort::Value xt_tensor = ConvertColMajorToONNX(xt, memory_info);
+    // Retrieve expected input shapes from the model
+    auto input0_shape = model.GetInputTypeInfo(0).GetTensorTypeAndShapeInfo().GetShape(); // For xt
+    auto input1_shape = model.GetInputTypeInfo(1).GetTensorTypeAndShapeInfo().GetShape(); // For x
+
+    // Prepare ONNX input tensors by converting ColMajor to RowMajor with correct shapes
+    Ort::Value xt_tensor = ConvertColMajorToONNX(xt, memory_info, input0_shape); // For input 0
+    Ort::Value x_tensor = ConvertColMajorToONNX(x, memory_info, input1_shape);   // For input 1
 
     // Store allocated strings in vectors to prevent dangling pointers
     std::vector<Ort::AllocatedStringPtr> input_name_allocs;
@@ -113,8 +156,8 @@ static void RunONNXInferenceWithColToRow(Ort::Session &model, const Eigen::Tenso
 
     // Run inference
     std::vector<Ort::Value> input_tensors;
-    input_tensors.push_back(std::move(x_tensor));
-    input_tensors.push_back(std::move(xt_tensor));
+    input_tensors.push_back(std::move(xt_tensor)); // xt corresponds to input 0
+    input_tensors.push_back(std::move(x_tensor));  // x corresponds to input 1
 
     // Ensure RunOptions is properly defined
     Ort::RunOptions run_options;
@@ -127,9 +170,26 @@ static void RunONNXInferenceWithColToRow(Ort::Session &model, const Eigen::Tenso
                                     output_names.data(),
                                     output_names.size());
 
+    // Retrieve expected output shapes
+    auto output0_shape = model.GetOutputTypeInfo(0).GetTensorTypeAndShapeInfo().GetShape();
+    auto output1_shape = model.GetOutputTypeInfo(1).GetTensorTypeAndShapeInfo().GetShape();
+
+    // print shapes pre-conversion
+    // Print shapes pre-conversion
+    std::ostringstream ss;
+    ss << "[ONNX] output0_shape: ";
+    for (auto dim : output0_shape) ss << dim << ", ";
+    ss << "\n[ONNX] output1_shape: ";
+    for (auto dim : output1_shape) ss << dim << ", ";
+    std::cout << ss.str() << std::endl;
+
+    // Retrieve actual output shapes from the tensors
+    std::vector<int64_t> actual_output0_shape = output_tensors[0].GetTensorTypeAndShapeInfo().GetShape();
+    std::vector<int64_t> actual_output1_shape = output_tensors[1].GetTensorTypeAndShapeInfo().GetShape();
+
     // Convert RowMajor ONNX outputs back to ColMajor Eigen tensors
-    x_out = ConvertONNXToColMajor(output_tensors[0], x_out.dimensions());
-    xt_out = ConvertONNXToColMajor(output_tensors[1], xt_out.dimensions());
+    x_out_onnx = ConvertONNXToColMajor<5>(output_tensors[0], actual_output0_shape);
+    xt_out_onnx = ConvertONNXToColMajor<4>(output_tensors[1], actual_output1_shape);
 }
 
 // run core demucs inference using onnx
@@ -209,67 +269,12 @@ void demucsonnx::model_inference(
 
     // now we have the stft, apply the core demucs inference
     // (where we removed the stft/istft to successfully convert to ONNX)
-
-    Ort::AllocatorWithDefaultOptions allocator;
-
-    // Get and print input tensor information
-    size_t num_inputs = model.GetInputCount();
-    std::cout << "Number of inputs: " << num_inputs << std::endl;
-
-    for (size_t i = 0; i < num_inputs; ++i) {
-        std::string input_name = model.GetInputNameAllocated(i, allocator).get();
-        std::cout << "Input " << i << " name: " << input_name << std::endl;
-
-        Ort::TypeInfo type_info = model.GetInputTypeInfo(i);
-        auto tensor_info = type_info.GetTensorTypeAndShapeInfo();
-
-        // Print element type
-        ONNXTensorElementDataType type = tensor_info.GetElementType();
-        std::cout << "Input " << i << " type: " << type << std::endl;
-
-        // Print shape
-        std::vector<int64_t> input_shape = tensor_info.GetShape();
-        std::cout << "Input " << i << " shape: ";
-        for (auto dim : input_shape) {
-            std::cout << dim << " ";
-        }
-        std::cout << std::endl;
-    }
-
-    // Get and print output tensor information
-    size_t num_outputs = model.GetOutputCount();
-    std::cout << "Number of outputs: " << num_outputs << std::endl;
-
-    for (size_t i = 0; i < num_outputs; ++i) {
-        std::string output_name = model.GetOutputNameAllocated(i, allocator).get();
-        std::cout << "Output " << i << " name: " << output_name << std::endl;
-
-        Ort::TypeInfo type_info = model.GetOutputTypeInfo(i);
-        auto tensor_info = type_info.GetTensorTypeAndShapeInfo();
-
-        // Print element type
-        ONNXTensorElementDataType type = tensor_info.GetElementType();
-        std::cout << "Output " << i << " type: " << type << std::endl;
-
-        // Print shape
-        std::vector<int64_t> output_shape = tensor_info.GetShape();
-        std::cout << "Output " << i << " shape: ";
-        for (auto dim : output_shape) {
-            std::cout << dim << " ";
-        }
-        std::cout << std::endl;
-    }
-
     // Apply ONNX inference with col-major to row-major translation
-    RunONNXInferenceWithColToRow(model, buffers.x, buffers.xt, buffers.x_out, buffers.xt_out);
+    RunONNXInferenceWithColToRow(model, buffers.x, buffers.xt, buffers.x_out_onnx, buffers.xt_out_onnx);
 
-    // create output tensor
+    std::cout << "ONNX inference completed." << std::endl;
 
     const int nb_out_sources = 4;
-
-    // 4 sources, 2 channels * 2 complex channels (real+imag), F bins, T frames
-    Eigen::Tensor4dXf x_4d = Eigen::Tensor4dXf(
-        nb_out_sources, 4, buffers.x.dimension(1), buffers.x.dimension(2));
 
     // 4 sources, 2 channels, N samples
     std::vector<Eigen::MatrixXf> xt_3d = {
@@ -282,35 +287,33 @@ void demucsonnx::model_inference(
     // in pytorch it's (16, 2048, 336) i.e. (chan, freq, time)
     // then apply `.view(4, -1, freq, time)
 
-    // implement above logic in Eigen C++
-    // copy buffers.x into x_4d
-    // apply opposite of
-    // buffers.x(i, j, k) = (buffers.x(i, j, k) - mean) / (epsilon + std_);
-    for (int s = 0; s < nb_out_sources; ++s)
-    { // loop over 4 sources
-        for (int i = 0; i < 4; ++i)
-        {
-            for (int j = 0; j < buffers.x.dimension(1); ++j)
-            {
-                for (int k = 0; k < buffers.x.dimension(2); ++k)
-                {
-                    x_4d(s, i, j, k) = buffers.x_out(s * 4 + i, j, k);
-                }
-            }
-        }
-    }
+    // x_out_onnx is already x4d
+
+    // print shape of xt_out_onnx
+    std::cout << "xt_out_onnx: " << buffers.xt_out_onnx.dimension(0) << ", "
+              << buffers.xt_out_onnx.dimension(1) << ", "
+              << buffers.xt_out_onnx.dimension(2) << ", "
+              << buffers.xt_out_onnx.dimension(3) << std::endl;
+
+    // print shape of 1 element of xt_3d
+    std::cout << "xt_3d (4x): " << xt_3d[0].rows() << ", " << xt_3d[0].cols()
+              << std::endl;
 
     // let's also copy buffers.xt into xt_4d
     for (int s = 0; s < nb_out_sources; ++s)
     { // loop over 4 sources
         for (int i = 0; i < 2; ++i)
         {
-            for (int j = 0; j < buffers.xt.dimension(2); ++j)
+            for (int j = 0; j < buffers.xt_out_onnx.dimension(3); ++j)
             {
-                xt_3d[s](i, j) = buffers.xt_out(0, s * 2 + i, j);
+                xt_3d[s](i, j) = buffers.xt_out_onnx(0, s, i, j);
             }
         }
     }
+
+    std::cout << "copied xt_out_onnx into xt_3d" << std::endl;
+
+    std::cout << "Now copying x_out_onnx into targets_out" << std::endl;
 
     // If `cac` is True, `m` is actually a full spectrogram and `z` is ignored.
     // undo complex-as-channels by splitting the 2nd dim of x_4d into (2, 2)
@@ -318,6 +321,23 @@ void demucsonnx::model_inference(
     {
         Eigen::Tensor3dXcf x_target = Eigen::Tensor3dXcf(
             2, buffers.x.dimension(1), buffers.x.dimension(2));
+
+        // print shape of x_target
+        std::cout << "x_target: " << x_target.dimension(0) << ", "
+                  << x_target.dimension(1) << ", " << x_target.dimension(2)
+                  << std::endl;
+
+        // print shape of x_out_onnx which is 5d
+        std::cout << "x_out_onnx: " << buffers.x_out_onnx.dimension(0) << ", "
+                  << buffers.x_out_onnx.dimension(1) << ", "
+                  << buffers.x_out_onnx.dimension(2) << ", "
+                  << buffers.x_out_onnx.dimension(3) << ", "
+                  << buffers.x_out_onnx.dimension(4) << std::endl;
+
+        // print shape of z
+        std::cout << "z: " << buffers.z.dimension(0) << ", "
+                  << buffers.z.dimension(1) << ", " << buffers.z.dimension(2)
+                  << std::endl;
 
         // in the CaC case, we're simply unstacking the complex
         // spectrogram from the channel dimension
@@ -331,11 +351,13 @@ void demucsonnx::model_inference(
                     // buffers.x(2*i, j, k) = buffers.z(i, j, k).real();
                     // buffers.x(2*i + 1, j, k) = buffers.z(i, j, k).imag();
                     x_target(i, j, k) =
-                        std::complex<float>(x_4d(source, 2 * i, j, k),
-                                            x_4d(source, 2 * i + 1, j, k));
+                        std::complex<float>(buffers.x_out_onnx(0, source, 2 * i, j, k),
+                                            buffers.x_out_onnx(0, source, 2 * i + 1, j, k));
                 }
             }
         }
+
+        std::cout << "copied x_out_onnx into x_target" << std::endl;
 
         // need to re-pad 2: 2 + le on spectrogram
         // opposite of this

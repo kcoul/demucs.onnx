@@ -11,6 +11,7 @@
 namespace Eigen
 {
 // define Tensor3dXf, Tensor3dXcf for spectrograms etc.
+typedef Tensor<float, 5> Tensor5dXf;
 typedef Tensor<float, 4> Tensor4dXf;
 typedef Tensor<float, 3> Tensor3dXf;
 typedef Tensor<float, 3, RowMajor> Tensor3dRowMajorXf;

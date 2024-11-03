@@ -38,8 +38,8 @@ struct demucs_segment_buffers
     Eigen::Tensor3dXf x;     // input
     Eigen::Tensor3dXf xt;     // input
 
-    Eigen::Tensor3dXf x_out; // output
-    Eigen::Tensor3dXf xt_out; // output
+    Eigen::Tensor5dXf x_out_onnx; // onnx output
+    Eigen::Tensor4dXf xt_out_onnx; // onnx output
 
     // constructor for demucs_segment_buffers that takes int parameters
 
@@ -60,8 +60,8 @@ struct demucs_segment_buffers
           // complex-as-channels implies 2*nb_channels for real+imag
           x(2 * nb_channels, nb_stft_bins - 1, nb_stft_frames),
           xt(1, nb_channels, segment_samples),
-          x_out(nb_sources * 2 * nb_channels, nb_stft_bins - 1, nb_stft_frames),
-          xt_out(1, nb_sources * nb_channels, segment_samples){};
+          x_out_onnx(1, 2 * nb_channels, nb_sources, nb_stft_bins - 1, nb_stft_frames),
+          xt_out_onnx(1, nb_sources, nb_channels, segment_samples){};
 };
 
 Ort::Session load_model(const std::string htdemucs_model_path);

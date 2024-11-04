@@ -58,9 +58,10 @@ static void reflect_padding(Eigen::MatrixXf &padded_mix,
     }
 }
 
-static Ort::Value ConvertColMajorToONNX(const Eigen::Tensor<float, 3, Eigen::ColMajor> &col_tensor,
-                                        Ort::MemoryInfo &memory_info,
-                                        const std::vector<int64_t>& shape) {
+static Ort::Value ConvertColMajorToONNX(
+    const Eigen::Tensor3dXf &col_tensor,
+    Ort::AllocatorWithDefaultOptions &allocator,
+    const std::vector<int64_t> &shape) {
     // Calculate the total size
     size_t size = col_tensor.size();
 
@@ -73,22 +74,22 @@ static Ort::Value ConvertColMajorToONNX(const Eigen::Tensor<float, 3, Eigen::Col
         throw std::runtime_error("Size mismatch between tensor data and shape.");
     }
 
-    // Swap layout to RowMajor
-    Eigen::Tensor3dRowMajorXf row_tensor = col_tensor.swap_layout();
-    // reverse the order of the dimensions after Eigen swap_layout
+    // Swap layout to RowMajor and shuffle dimensions
     Eigen::array<int, 3> shuffle_dims = {2, 1, 0};
-    Eigen::Tensor3dRowMajorXf row_tensor_shuf = row_tensor.shuffle(shuffle_dims);
+    Eigen::Tensor<float, 3, Eigen::RowMajor> row_tensor =
+        col_tensor.swap_layout().shuffle(shuffle_dims).eval();
 
-    // Copy data to a contiguous vector
-    std::vector<float> row_major_data(size);
-    std::memcpy(row_major_data.data(), row_tensor_shuf.data(), size * sizeof(float));
+    // Create tensor with allocated memory
+    Ort::Value ret = Ort::Value::CreateTensor<float>(
+        allocator,
+        shape.data(),
+        shape.size());
 
-    // Create and return the ONNX Runtime tensor
-    return Ort::Value::CreateTensor<float>(memory_info,
-                                           row_major_data.data(),
-                                           size,
-                                           shape.data(),
-                                           shape.size());
+    // Copy data into tensor
+    float* tensor_data = ret.GetTensorMutableData<float>();
+    std::memcpy(tensor_data, row_tensor.data(), size * sizeof(float));
+
+    return ret;
 }
 
 template <int Rank>
@@ -118,7 +119,19 @@ static Eigen::Tensor<float, Rank, Eigen::ColMajor> ConvertONNXToColMajor(
     }
 
     // Swap layout to ColMajor
-    return row_tensor_map.swap_layout().shuffle(shuffle_dims);
+    //return row_tensor_map.swap_layout().shuffle(shuffle_dims);
+    // Swap layout to ColMajor and shuffle dimensions
+    Eigen::Tensor<float, Rank, Eigen::ColMajor> result_tensor =
+        row_tensor_map.swap_layout().shuffle(shuffle_dims).eval();
+
+    // debug the size of result_tensor
+    std::cout << "result_tensor size: " << result_tensor.size() << std::endl;
+    // debug dimensions of result_tensor
+    std::cout << "result_tensor shape: ";
+    for (auto dim : result_tensor.dimensions()) std::cout << dim << ", ";
+    std::cout << std::endl;
+
+    return result_tensor;
 }
 
 void RunONNXInferenceWithColToRow(Ort::Session &model,
@@ -127,15 +140,18 @@ void RunONNXInferenceWithColToRow(Ort::Session &model,
                                   Eigen::Tensor5dXf &x_out_onnx,
                                   Eigen::Tensor4dXf &xt_out_onnx) {
     Ort::AllocatorWithDefaultOptions allocator;
-    Ort::MemoryInfo memory_info = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
 
     // Retrieve expected input shapes from the model
     auto input0_shape = model.GetInputTypeInfo(0).GetTensorTypeAndShapeInfo().GetShape(); // For xt
     auto input1_shape = model.GetInputTypeInfo(1).GetTensorTypeAndShapeInfo().GetShape(); // For x
 
     // Prepare ONNX input tensors by converting ColMajor to RowMajor with correct shapes
-    Ort::Value xt_tensor = ConvertColMajorToONNX(xt, memory_info, input0_shape); // For input 0
-    Ort::Value x_tensor = ConvertColMajorToONNX(x, memory_info, input1_shape);   // For input 1
+    Ort::Value xt_tensor = ConvertColMajorToONNX(xt, allocator, input0_shape); // For input 0
+    Ort::Value x_tensor = ConvertColMajorToONNX(x, allocator, input1_shape);   // For input 1
+
+    demucsonnxdebug::debug_tensor_ort(x_tensor, "x_tensor ORT");
+    demucsonnxdebug::debug_tensor_ort(xt_tensor, "xt_tensor ORT");
+    std::cin.ignore();
 
     // Store allocated strings in vectors to prevent dangling pointers
     std::vector<Ort::AllocatedStringPtr> input_name_allocs;
@@ -174,15 +190,6 @@ void RunONNXInferenceWithColToRow(Ort::Session &model,
     auto output0_shape = model.GetOutputTypeInfo(0).GetTensorTypeAndShapeInfo().GetShape();
     auto output1_shape = model.GetOutputTypeInfo(1).GetTensorTypeAndShapeInfo().GetShape();
 
-    // print shapes pre-conversion
-    // Print shapes pre-conversion
-    std::ostringstream ss;
-    ss << "[ONNX] output0_shape: ";
-    for (auto dim : output0_shape) ss << dim << ", ";
-    ss << "\n[ONNX] output1_shape: ";
-    for (auto dim : output1_shape) ss << dim << ", ";
-    std::cout << ss.str() << std::endl;
-
     // Retrieve actual output shapes from the tensors
     std::vector<int64_t> actual_output0_shape = output_tensors[0].GetTensorTypeAndShapeInfo().GetShape();
     std::vector<int64_t> actual_output1_shape = output_tensors[1].GetTensorTypeAndShapeInfo().GetShape();
@@ -212,24 +219,12 @@ void demucsonnx::model_inference(
     // let's get a stereo complex spectrogram first
     demucsonnx::stft(stft_buf);
 
-    // print the shape of stft_buf.spec
-    std::cout << "stft_buf.spec: " << stft_buf.spec.dimension(0) << ", "
-              << stft_buf.spec.dimension(1) << ", " << stft_buf.spec.dimension(2)
-              << std::endl;
-
     // remove 2: 2 + le of stft
     // same behavior as _spec in the python apply.py code
     buffers.z = stft_buf.spec.slice(
         Eigen::array<int, 3>{0, 0, 2},
         Eigen::array<int, 3>{2, (int)stft_buf.spec.dimension(1),
                              (int)stft_buf.spec.dimension(2) - 4});
-
-    std::ostringstream ss;
-    // print z shape
-    ss << "buffers.z: " << buffers.z.dimension(0) << ", "
-       << buffers.z.dimension(1) << ", " << buffers.z.dimension(2);
-    cb(current_progress + 0.0f, ss.str());
-    ss.str("");
 
     // x = mag = z.abs(), but for CaC we're simply stacking the complex
     // spectrogram along the channel dimension
@@ -246,14 +241,6 @@ void demucsonnx::model_inference(
         }
     }
 
-    // x shape is complex*chan, nb_frames, nb_bins (2048)
-    // using CaC (complex-as-channels)
-    // print x shape
-    ss << "buffers.x: " << buffers.x.dimension(0) << ", "
-       << buffers.x.dimension(1) << ", " << buffers.x.dimension(2);
-    cb(current_progress + 0.0f, ss.str());
-    ss.str("");
-
     // copy buffers.padded_mix into buffers.xt
     // adding a leading dimension of (1, )
 
@@ -266,16 +253,18 @@ void demucsonnx::model_inference(
         }
     }
 
-    // print it like the above
-    ss << "buffers.xt: " << buffers.xt.dimension(0) << ", "
-       << buffers.xt.dimension(1) << ", " << buffers.xt.dimension(2);
-    cb(current_progress + 0.0f, ss.str());
-    ss.str("");
+    demucsonnxdebug::debug_tensor_3dxf(buffers.x, "buffers.x");
+    demucsonnxdebug::debug_tensor_3dxf(buffers.xt, "buffers.xt");
+    std::cin.ignore();
 
     // now we have the stft, apply the core demucs inference
     // (where we removed the stft/istft to successfully convert to ONNX)
     // Apply ONNX inference with col-major to row-major translation
     RunONNXInferenceWithColToRow(model, buffers.x, buffers.xt, buffers.x_out_onnx, buffers.xt_out_onnx);
+
+    demucsonnxdebug::debug_tensor_5dxf(buffers.x_out_onnx, "buffers.x_out_onnx");
+    demucsonnxdebug::debug_tensor_4dxf(buffers.xt_out_onnx, "buffers.xt_out_onnx");
+    std::cin.ignore();
 
     std::cout << "ONNX inference completed." << std::endl;
 
@@ -294,16 +283,6 @@ void demucsonnx::model_inference(
 
     // x_out_onnx is already x4d
 
-    // print shape of xt_out_onnx
-    std::cout << "xt_out_onnx: " << buffers.xt_out_onnx.dimension(0) << ", "
-              << buffers.xt_out_onnx.dimension(1) << ", "
-              << buffers.xt_out_onnx.dimension(2) << ", "
-              << buffers.xt_out_onnx.dimension(3) << std::endl;
-
-    // print shape of 1 element of xt_3d
-    std::cout << "xt_3d (4x): " << xt_3d[0].rows() << ", " << xt_3d[0].cols()
-              << std::endl;
-
     // let's also copy buffers.xt into xt_4d
     for (int s = 0; s < nb_out_sources; ++s)
     { // loop over 4 sources
@@ -316,33 +295,12 @@ void demucsonnx::model_inference(
         }
     }
 
-    std::cout << "copied xt_out_onnx into xt_3d" << std::endl;
-
-    std::cout << "Now copying x_out_onnx into targets_out" << std::endl;
-
     // If `cac` is True, `m` is actually a full spectrogram and `z` is ignored.
     // undo complex-as-channels by splitting the 2nd dim of x_4d into (2, 2)
     for (int source = 0; source < nb_out_sources; ++source)
     {
         Eigen::Tensor3dXcf z_target = Eigen::Tensor3dXcf(
             2, buffers.x.dimension(1), buffers.x.dimension(2));
-
-        // print shape of z_target
-        std::cout << "z_target: " << z_target.dimension(0) << ", "
-                  << z_target.dimension(1) << ", " << z_target.dimension(2)
-                  << std::endl;
-
-        // print shape of z
-        std::cout << "z: " << buffers.z.dimension(0) << ", "
-                  << buffers.z.dimension(1) << ", " << buffers.z.dimension(2)
-                  << std::endl;
-
-        // print shape of x_out_onnx which is 5d
-        std::cout << "x_out_onnx: " << buffers.x_out_onnx.dimension(0) << ", "
-                  << buffers.x_out_onnx.dimension(1) << ", "
-                  << buffers.x_out_onnx.dimension(2) << ", "
-                  << buffers.x_out_onnx.dimension(3) << ", "
-                  << buffers.x_out_onnx.dimension(4) << std::endl;
 
         // in the CaC case, we're simply unstacking the complex
         // spectrogram from the channel dimension
@@ -362,8 +320,6 @@ void demucsonnx::model_inference(
             }
         }
 
-        std::cout << "copied x_out_onnx into z_target" << std::endl;
-
         // need to re-pad 2: 2 + le on spectrogram
         // opposite of this
         // buffers.z = stft_buf.spec.slice(Eigen::array<int, 3>{0, 0, 2},
@@ -371,58 +327,26 @@ void demucsonnx::model_inference(
         //         (int)stft_buf.spec.dimension(2) - 4});
         // Add padding to spectrogram
 
-        // print shape of z_target
-        std::cout << "z_target: " << z_target.dimension(0) << ", "
-                  << z_target.dimension(1) << ", " << z_target.dimension(2)
-                  << std::endl;
-
         Eigen::array<std::pair<int, int>, 3> paddings = {
             std::make_pair(0, 0), std::make_pair(0, 1), std::make_pair(2, 2)};
         Eigen::Tensor3dXcf z_target_padded =
             z_target.pad(paddings, std::complex<float>(0.0f, 0.0f));
 
-        // print shape of z_target_padded
-        std::cout << "z_target_padded: " << z_target_padded.dimension(0) << ", "
-                  << z_target_padded.dimension(1) << ", " << z_target_padded.dimension(2)
-                  << std::endl;
-
-        // print shape of stft_buf.spec
-        std::cout << "stft_buf.spec: " << stft_buf.spec.dimension(0) << ", "
-                  << stft_buf.spec.dimension(1) << ", " << stft_buf.spec.dimension(2)
-                  << std::endl;
-
         stft_buf.spec = z_target_padded;
 
-        // print shape of stft_buf.spec
-        std::cout << "stft_buf.spec: " << stft_buf.spec.dimension(0) << ", "
-                  << stft_buf.spec.dimension(1) << ", " << stft_buf.spec.dimension(2)
-                  << std::endl;
-
         demucsonnx::istft(stft_buf);
-
-        std::cout << "istft completed" << std::endl;
 
         // now we have waveform from istft(x), the frequency branch
         // that we need to sum with xt, the time branch
         Eigen::MatrixXf padded_waveform = stft_buf.waveform;
-
-        std::cout << "padded_waveform: " << padded_waveform.rows() << ", "
-                  << padded_waveform.cols() << std::endl;
 
         // undo the reflect pad 1d by copying padded_mix into mix
         // from range buffers.pad:buffers.pad + buffers.segment_samples
         Eigen::MatrixXf unpadded_waveform =
             padded_waveform.block(0, buffers.pad, 2, buffers.segment_samples);
 
-        std::cout << "unpadded_waveform: " << unpadded_waveform.rows() << ", "
-                << unpadded_waveform.cols() << std::endl;
-
         // sum with xt
         unpadded_waveform += xt_3d[source];
-
-        ss << "mix: " << buffers.mix.rows() << ", " << buffers.mix.cols();
-        cb(current_progress + segment_progress, ss.str());
-        ss.str("");
 
         // copy target waveform into all 4 dims of targets_out
         for (int j = 0; j < 2; ++j)

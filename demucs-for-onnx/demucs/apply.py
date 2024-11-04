@@ -274,7 +274,16 @@ def apply_model(model, mix, shifts=1, split=True,
             # this is the padding previously done in the model
             padded_padded_mix = F.pad(padded_mix, (0, training_length - padded_mix.shape[-1]))
             magspec = standalone_magnitude(standalone_spec(padded_padded_mix))
+
+            debug_tensor_demucsonnx(magspec, "magspec")
+            debug_tensor_demucsonnx(padded_padded_mix, "padded_padded_mix")
+            input()
+
             out_x, out_xt = model(padded_mix, magspec)
+
+            debug_tensor_demucsonnx(out_x, "out_x")
+            debug_tensor_demucsonnx(out_xt, "out_xt")
+            input()
 
             # post-steps to apply
             #zout = self._mask(z, x)

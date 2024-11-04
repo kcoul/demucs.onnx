@@ -7,6 +7,8 @@
 #include <string>
 #include <unsupported/Eigen/CXX11/Tensor>
 #include <vector>
+#include <limits>
+#include <onnxruntime/core/session/onnxruntime_cxx_api.h>
 
 namespace Eigen
 {
@@ -22,6 +24,107 @@ typedef Tensor<std::complex<float>, 3> Tensor3dXcf;
 
 namespace demucsonnxdebug
 {
+inline void debug_tensor_5dxf(const Eigen::Tensor5dXf &x,
+                            const std::string &name)
+{
+    // return;
+    std::cout << "Debugging tensor!: " << name << std::endl;
+    std::cout << "\tshape: (" << x.dimension(0) << ", " << x.dimension(1)
+              << ", " << x.dimension(2) << ", " << x.dimension(3) << ", " << x.dimension(4) << ")"
+              << std::endl;
+
+    float x_min = 100000000.0f;
+    float x_max = -100000000.0f;
+    float x_sum = 0.0f;
+    float x_mean = 0.0f;
+    float x_stddev = 0.0f;
+
+    // store dimension index to save index of min/max
+    int x_min_idx_0 = -1;
+    int x_min_idx_1 = -1;
+    int x_min_idx_2 = -1;
+    int x_min_idx_3 = -1;
+    int x_min_idx_4 = -1;
+    int x_max_idx_0 = -1;
+    int x_max_idx_1 = -1;
+    int x_max_idx_2 = -1;
+    int x_max_idx_3 = -1;
+    int x_max_idx_4 = -1;
+
+    // loop over tensor and find min/max/sum
+    for (int i = 0; i < x.dimension(0); ++i)
+    {
+        for (int j = 0; j < x.dimension(1); ++j)
+        {
+            for (int k = 0; k < x.dimension(2); ++k)
+            {
+                for (int l = 0; l < x.dimension(3); ++l)
+                {
+                    for (int m = 0; m < x.dimension(4); ++m)
+                    {
+                        float val = x(i, j, k, l, m);
+                        x_sum += val;
+                        if (val < x_min)
+                        {
+                            x_min = val;
+                            x_min_idx_0 = i;
+                            x_min_idx_1 = j;
+                            x_min_idx_2 = k;
+                            x_min_idx_3 = l;
+                            x_min_idx_4 = m;
+                        }
+                        if (val > x_max)
+                        {
+                            x_max = val;
+                            x_max_idx_0 = i;
+                            x_max_idx_1 = j;
+                            x_max_idx_2 = k;
+                            x_max_idx_3 = l;
+                            x_max_idx_4 = m;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // compute mean and standard deviation
+    x_mean = x_sum / (x.dimension(0) * x.dimension(1) * x.dimension(2) *
+                      x.dimension(3) * x.dimension(4));
+    for (int i = 0; i < x.dimension(0); ++i)
+    {
+        for (int j = 0; j < x.dimension(1); ++j)
+        {
+            for (int k = 0; k < x.dimension(2); ++k)
+            {
+                for (int l = 0; l < x.dimension(3); ++l)
+                {
+                    for (int m = 0; m < x.dimension(4); ++m)
+                    {
+                        float val = x(i, j, k, l, m);
+                        x_stddev += (val - x_mean) * (val - x_mean);
+                    }
+                }
+            }
+        }
+    }
+    x_stddev = std::sqrt(x_stddev / (x.dimension(0) * x.dimension(1) *
+                                     x.dimension(2) * x.dimension(3) * x.dimension(4)));
+
+    // now print min, max, mean, stddev, and indices
+    std::cout << "\tmin: " << x_min << std::endl;
+    std::cout << "\tmax: " << x_max << std::endl;
+    std::cout << "\tmean: " << x_mean << std::endl;
+    std::cout << "\tstddev: " << x_stddev << std::endl;
+    std::cout << "\tsum: " << x_sum << std::endl;
+    std::cout << "\tmin idx: (" << x_min_idx_0 << ", " << x_min_idx_1 << ", "
+              << x_min_idx_2 << ", " << x_min_idx_3 << ", " << x_min_idx_4 << ")" << std::endl;
+    std::cout << "\tmax idx: (" << x_max_idx_0 << ", " << x_max_idx_1 << ", "
+              << x_max_idx_2 << ", " << x_max_idx_3 << ", " << x_max_idx_4 << ")" << std::endl;
+
+    std::cout << "FINISHED DEBUG for tensor: " << name << std::endl;
+}
+
 inline void debug_tensor_4dxf(const Eigen::Tensor4dXf &x,
                             const std::string &name)
 {
@@ -544,6 +647,80 @@ inline void debug_vector_xf(const Eigen::VectorXf &x, const std::string &name)
 
     std::cout << "FINISHED DEBUG for tensor: " << name << std::endl;
     // std::cin.ignore();
+}
+
+inline void debug_tensor_ort(const Ort::Value &tensor, const std::string &name) {
+    // Ensure the tensor is of type float
+    if (tensor.GetTensorTypeAndShapeInfo().GetElementType() != ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT) {
+        throw std::runtime_error("Only float tensors are supported.");
+    }
+
+    // Get tensor shape
+    std::vector<int64_t> shape = tensor.GetTensorTypeAndShapeInfo().GetShape();
+    size_t rank = shape.size();
+    size_t size = tensor.GetTensorTypeAndShapeInfo().GetElementCount();
+
+    // Print tensor name and shape
+    std::cout << "Debugging tensor!: " << name << std::endl;
+    std::cout << "\tshape: (";
+    for (size_t i = 0; i < rank; ++i) {
+        std::cout << shape[i];
+        if (i < rank - 1) std::cout << ", ";
+    }
+    std::cout << ")" << std::endl;
+
+    // Get tensor data
+    const float* data = tensor.GetTensorData<float>();
+
+    // Calculate min, max, sum, mean, and stddev
+    float min_val = std::numeric_limits<float>::max();
+    float max_val = std::numeric_limits<float>::lowest();
+    float sum = 0.0f;
+    float mean = 0.0f;
+    float stddev = 0.0f;
+    std::vector<int64_t> min_idx(rank, -1);
+    std::vector<int64_t> max_idx(rank, -1);
+
+    for (size_t i = 0; i < size; ++i) {
+        float val = data[i];
+        sum += val;
+        if (val < min_val) {
+            min_val = val;
+            min_idx = {i / (shape[1] * shape[2]), (i / shape[2]) % shape[1], i % shape[2]};
+        }
+        if (val > max_val) {
+            max_val = val;
+            max_idx = {i / (shape[1] * shape[2]), (i / shape[2]) % shape[1], i % shape[2]};
+        }
+    }
+    mean = sum / size;
+
+    for (size_t i = 0; i < size; ++i) {
+        float val = data[i];
+        stddev += (val - mean) * (val - mean);
+    }
+    stddev = std::sqrt(stddev / size);
+
+    // Print statistics
+    std::cout << "\tmin: " << min_val << std::endl;
+    std::cout << "\tmax: " << max_val << std::endl;
+    std::cout << "\tmean: " << mean << std::endl;
+    std::cout << "\tstddev: " << stddev << std::endl;
+    std::cout << "\tsum: " << sum << std::endl;
+    std::cout << "\tmin idx: (";
+    for (size_t i = 0; i < rank; ++i) {
+        std::cout << min_idx[i];
+        if (i < rank - 1) std::cout << ", ";
+    }
+    std::cout << ")" << std::endl;
+    std::cout << "\tmax idx: (";
+    for (size_t i = 0; i < rank; ++i) {
+        std::cout << max_idx[i];
+        if (i < rank - 1) std::cout << ", ";
+    }
+    std::cout << ")" << std::endl;
+
+    std::cout << "FINISHED DEBUG for tensor: " << name << std::endl;
 }
 } // namespace demucsonnxdebug
 

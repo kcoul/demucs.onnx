@@ -124,13 +124,6 @@ static Eigen::Tensor<float, Rank, Eigen::ColMajor> ConvertONNXToColMajor(
     Eigen::Tensor<float, Rank, Eigen::ColMajor> result_tensor =
         row_tensor_map.swap_layout().shuffle(shuffle_dims).eval();
 
-    // debug the size of result_tensor
-    std::cout << "result_tensor size: " << result_tensor.size() << std::endl;
-    // debug dimensions of result_tensor
-    std::cout << "result_tensor shape: ";
-    for (auto dim : result_tensor.dimensions()) std::cout << dim << ", ";
-    std::cout << std::endl;
-
     return result_tensor;
 }
 
@@ -148,10 +141,6 @@ void RunONNXInferenceWithColToRow(Ort::Session &model,
     // Prepare ONNX input tensors by converting ColMajor to RowMajor with correct shapes
     Ort::Value xt_tensor = ConvertColMajorToONNX(xt, allocator, input0_shape); // For input 0
     Ort::Value x_tensor = ConvertColMajorToONNX(x, allocator, input1_shape);   // For input 1
-
-    demucsonnxdebug::debug_tensor_ort(x_tensor, "x_tensor ORT");
-    demucsonnxdebug::debug_tensor_ort(xt_tensor, "xt_tensor ORT");
-    std::cin.ignore();
 
     // Store allocated strings in vectors to prevent dangling pointers
     std::vector<Ort::AllocatedStringPtr> input_name_allocs;
@@ -253,18 +242,10 @@ void demucsonnx::model_inference(
         }
     }
 
-    demucsonnxdebug::debug_tensor_3dxf(buffers.x, "buffers.x");
-    demucsonnxdebug::debug_tensor_3dxf(buffers.xt, "buffers.xt");
-    std::cin.ignore();
-
     // now we have the stft, apply the core demucs inference
     // (where we removed the stft/istft to successfully convert to ONNX)
     // Apply ONNX inference with col-major to row-major translation
     RunONNXInferenceWithColToRow(model, buffers.x, buffers.xt, buffers.x_out_onnx, buffers.xt_out_onnx);
-
-    demucsonnxdebug::debug_tensor_5dxf(buffers.x_out_onnx, "buffers.x_out_onnx");
-    demucsonnxdebug::debug_tensor_4dxf(buffers.xt_out_onnx, "buffers.xt_out_onnx");
-    std::cin.ignore();
 
     std::cout << "ONNX inference completed." << std::endl;
 

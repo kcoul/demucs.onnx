@@ -24,28 +24,6 @@ from .utils import center_trim, DummyPoolExecutor
 
 Model = tp.Union[Demucs, HDemucs, HTDemucs]
 
-def debug_tensor_demucsonnx(x, name):
-    #check if x is of type TensorChunk
-    if hasattr(x, 'tensor'):
-        # split into subchunk from self.offset:self.offset+self.length
-        x = x.tensor[..., x.offset:x.offset+x.length]
-
-    print(f"Debugging tensor!: {name}")
-    print(f"\tshape: {tuple(x.shape)}")
-    x_min, x_min_idx = th.min(x.reshape(-1), dim=0)
-    x_max, x_max_idx = th.max(x.reshape(-1), dim=0)
-    x_mean = th.mean(x)
-    x_stddev = th.std(x)
-    x_sum = th.sum(x)
-    print(f"\tmin: {x_min.item()}")
-    print(f"\tmax: {x_max.item()}")
-    print(f"\tmean: {x_mean.item()}")
-    print(f"\tstddev: {x_stddev.item()}")
-    print(f"\tsum: {x_sum.item()}")
-    print(f"\tmin idx: {tuple(np.unravel_index(x_min_idx.item(), x.shape))}")
-    print(f"\tmax idx: {tuple(np.unravel_index(x_max_idx.item(), x.shape))}")
-    print(f"FINISHED DEBUG FOR TENSOR {name}")
-
 
 class BagOfModels(nn.Module):
     def __init__(self, models: tp.List[Model],
@@ -215,8 +193,8 @@ def apply_model(model, mix, shifts=1, split=True,
         padded_mix = mix.padded(length + 2 * max_shift)
         out = 0
         for _ in range(shifts):
-            #offset = random.randint(0, max_shift)
-            offset = 1337
+            offset = random.randint(0, max_shift)
+            #offset = 1337
             shifted = TensorChunk(padded_mix, offset, length + max_shift - offset)
             shifted_out = apply_model(model, shifted, **kwargs)
             out += shifted_out[..., max_shift - offset:]
@@ -263,9 +241,6 @@ def apply_model(model, mix, shifts=1, split=True,
         mix = tensor_chunk(mix)
         padded_mix = mix.padded(valid_length).to(device)
 
-        debug_tensor_demucsonnx(padded_mix, "padded_mix")
-        input()
-
         # now that we chopped up demucs to remove the stft/istft
         # from the model itself, we need to do that before and after
         # the inference
@@ -275,15 +250,7 @@ def apply_model(model, mix, shifts=1, split=True,
             padded_padded_mix = F.pad(padded_mix, (0, training_length - padded_mix.shape[-1]))
             magspec = standalone_magnitude(standalone_spec(padded_padded_mix))
 
-            debug_tensor_demucsonnx(magspec, "magspec")
-            debug_tensor_demucsonnx(padded_padded_mix, "padded_padded_mix")
-            input()
-
             out_x, out_xt = model(padded_mix, magspec)
-
-            debug_tensor_demucsonnx(out_x, "out_x")
-            debug_tensor_demucsonnx(out_xt, "out_xt")
-            input()
 
             # post-steps to apply
             #zout = self._mask(z, x)

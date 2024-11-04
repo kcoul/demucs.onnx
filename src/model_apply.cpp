@@ -111,8 +111,7 @@ shift_inference(Ort::Session &model,
 
     symmetric_zero_padding(padded_mix, full_audio, 2 * max_shift);
 
-    //int offset = rand() % max_shift;
-    int offset = 1337;
+    int offset = rand() % max_shift;
 
     std::cout << "1., apply model w/ shift, offset: " << offset << std::endl;
 
@@ -259,10 +258,6 @@ static Eigen::Tensor3dXf segment_inference(
     // assign two ints to tuple return value
     std::tuple<int, int> padding = symmetric_zero_padding(
         buffers.mix, chunk, segment_samples - chunk_length);
-
-    // now let's debug buffers.mix
-    demucsonnxdebug::debug_matrix_xf(buffers.mix, "buffers.mix");
-    std::cin.ignore();
 
     // apply demucs inference via ONNX
     demucsonnx::model_inference(model, buffers, stft_buf, cb, current_progress,

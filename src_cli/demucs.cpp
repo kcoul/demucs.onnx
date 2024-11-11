@@ -19,6 +19,34 @@
 
 using namespace nqr;
 
+// Overload for file path, calling one of the other overloads as needed
+static demucsonnx::demucs_model load_model(
+    const std::string& htdemucs_model_path,
+    Ort::SessionOptions& session_options
+) {
+    struct demucsonnx::demucs_model model;
+
+    std::ifstream file(htdemucs_model_path, std::ios::binary | std::ios::ate);
+    if (!file) {
+        throw std::runtime_error("Failed to open model file: " + htdemucs_model_path);
+    }
+
+    std::streamsize size = file.tellg();
+    file.seekg(0, std::ios::beg);
+
+    std::vector<char> file_data(size);
+    if (!file.read(file_data.data(), size)) {
+        throw std::runtime_error("Failed to read model file.");
+    }
+
+    bool success = demucsonnx::load_model(file_data, model, session_options);
+    if (!success) {
+        throw std::runtime_error("Failed to load model.");
+    }
+
+    return model;
+}
+
 static Eigen::MatrixXf load_audio_file(std::string filename)
 {
     // load a wav file with libnyquist
@@ -49,7 +77,7 @@ static Eigen::MatrixXf load_audio_file(std::string filename)
     }
 
     // number of samples per channel
-    size_t N = fileData->samples.size() / fileData->channelCount;
+    std::size_t N = fileData->samples.size() / fileData->channelCount;
 
     // create a struct to hold two float vectors for left and right channels
     Eigen::MatrixXf ret(2, N);
@@ -57,7 +85,7 @@ static Eigen::MatrixXf load_audio_file(std::string filename)
     if (fileData->channelCount == 1)
     {
         // Mono case
-        for (size_t i = 0; i < N; ++i)
+        for (std::size_t i = 0; i < N; ++i)
         {
             ret(0, i) = fileData->samples[i]; // left channel
             ret(1, i) = fileData->samples[i]; // right channel
@@ -66,7 +94,7 @@ static Eigen::MatrixXf load_audio_file(std::string filename)
     else
     {
         // Stereo case
-        for (size_t i = 0; i < N; ++i)
+        for (std::size_t i = 0; i < N; ++i)
         {
             ret(0, i) = fileData->samples[2 * i];     // left channel
             ret(1, i) = fileData->samples[2 * i + 1]; // right channel
@@ -158,7 +186,22 @@ int main(int argc, const char **argv)
                   << progress * 100.0f << "%) " << log_message << std::endl;
     };
 
-    Ort::Session model = demucsonnx::load_model(model_file);
+    // create Ort::SessionOptions
+    Ort::SessionOptions session_options;
+
+    // max out threads and increase performance to the max on my beefy
+    // desktop CPU
+    session_options.SetExecutionMode(ExecutionMode::ORT_PARALLEL);
+    session_options.SetIntraOpNumThreads(16);
+    session_options.SetInterOpNumThreads(16);
+
+    // General optimizations
+    session_options.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
+
+    struct demucsonnx::demucs_model model = load_model(
+        model_file,
+        session_options
+    );
 
     // create 4 audio matrix same size, to hold output
     Eigen::Tensor3dXf audio_targets =
@@ -166,7 +209,7 @@ int main(int argc, const char **argv)
 
     out_targets = audio_targets;
 
-    const int nb_out_sources = 4;
+    int nb_out_sources = model.nb_sources;
 
     for (int target = 0; target < nb_out_sources; ++target)
     {

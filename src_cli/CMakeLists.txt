@@ -22,16 +22,3 @@ file(GLOB SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/../src/*.cpp" "${CMAKE_CURRENT_SO
 add_executable(demucs ${SOURCES})
 
 target_link_libraries(demucs ${ONNX_RUNTIME_LIB} libnyquist)
-
-#file(GLOB SOURCES_TO_LINT "${CMAKE_CURRENT_SOURCE_DIR}/../src/*.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/../src/*.hpp" "${CMAKE_CURRENT_SOURCE_DIR}/../src_wasm/*.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/../src_cli/*.cpp")
-#
-## add target to run standard lints and formatters
-#add_custom_target(lint
-#    COMMAND clang-format -i ${SOURCES_TO_LINT} --style=file
-#    # add clang-tidy command
-#    # add include dirs to clang-tidy
-#    COMMAND cppcheck -I"src/" -I"cli-apps/" --enable=all --suppress=missingIncludeSystem ${SOURCES_TO_LINT} --std=c++17
-#    COMMAND scan-build -o ${CMAKE_BINARY_DIR}/scan-build-report make -C ${CMAKE_BINARY_DIR}
-#    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
-#)
-#

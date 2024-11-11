@@ -23,8 +23,6 @@ struct stft_buffers
     int nb_bins;
     int pad;
 
-    Eigen::MatrixXf waveform;
-
     const std::vector<float> window;
     const std::vector<float> normalized_window;
 
@@ -36,14 +34,11 @@ struct stft_buffers
 
     std::vector<std::vector<std::complex<float>>> complex_spec_mono;
 
-    Eigen::Tensor3dXcf spec;
-
     // constructor for stft_buffers that takes some parameters
     // to hint at the sizes of the buffers
     explicit stft_buffers(int n_samples)
         : nb_frames(n_samples / FFT_HOP_SIZE + 1),
           nb_bins(FFT_WINDOW_SIZE / 2 + 1), pad(FFT_WINDOW_SIZE / 2),
-          waveform(Eigen::MatrixXf(2, n_samples)),
           window(init_const_hann_window()),
           normalized_window(init_const_normalized_window(window, nb_frames)),
           pad_start(std::vector<float>(pad)), pad_end(std::vector<float>(pad)),
@@ -53,8 +48,7 @@ struct stft_buffers
               std::vector<float>(n_samples + FFT_WINDOW_SIZE)),
           windowed_waveform_mono(std::vector<float>(FFT_WINDOW_SIZE)),
           complex_spec_mono(std::vector<std::vector<std::complex<float>>>(
-              nb_frames, std::vector<std::complex<float>>(nb_bins))),
-          spec(Eigen::Tensor3dXcf(2, nb_bins, nb_frames)){};
+              nb_frames, std::vector<std::complex<float>>(nb_bins))){};
 
     static std::vector<float> init_const_hann_window()
     {
@@ -100,8 +94,15 @@ struct stft_buffers
     }
 };
 
-void stft(struct stft_buffers &stft_buf);
-void istft(struct stft_buffers &stft_buf);
+void stft(
+    struct stft_buffers &stft_buf,
+    const Eigen::MatrixXf &waveform,
+    Eigen::Tensor3dXcf &spec);
+
+void istft(
+    struct stft_buffers &stft_buf,
+    const Eigen::Tensor3dXcf &spec,
+    Eigen::MatrixXf &waveform);
 
 } // namespace demucsonnx
 

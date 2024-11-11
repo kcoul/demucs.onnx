@@ -48,7 +48,10 @@ Eigen::FFT<float> get_fft_cfg()
     return cfg;
 }
 
-void demucsonnx::stft(struct stft_buffers &stft_buf)
+void demucsonnx::stft(
+    struct stft_buffers &stft_buf,
+    const Eigen::MatrixXf &waveform,
+    Eigen::Tensor3dXcf &spec)
 {
     // get the fft config
     Eigen::FFT<float> cfg = get_fft_cfg();
@@ -59,7 +62,7 @@ void demucsonnx::stft(struct stft_buffers &stft_buf)
 
     for (int channel = 0; channel < 2; ++channel)
     {
-        Eigen::VectorXf row_vec = stft_buf.waveform.row(channel);
+        Eigen::VectorXf row_vec = waveform.row(channel);
 
         std::copy_n(row_vec.data(), row_vec.size(),
                     stft_buf.padded_waveform_mono_in.begin() + stft_buf.pad);
@@ -79,13 +82,16 @@ void demucsonnx::stft(struct stft_buffers &stft_buf)
         {
             for (int j = 0; j < stft_buf.nb_frames; ++j)
             {
-                stft_buf.spec(channel, i, j) = stft_buf.complex_spec_mono[j][i];
+                spec(channel, i, j) = stft_buf.complex_spec_mono[j][i];
             }
         }
     }
 }
 
-void demucsonnx::istft(struct stft_buffers &stft_buf)
+void demucsonnx::istft(
+    struct stft_buffers &stft_buf,
+    const Eigen::Tensor3dXcf &spec,
+    Eigen::MatrixXf &waveform)
 {
     // get the fft config
     Eigen::FFT<float> cfg = get_fft_cfg();
@@ -101,7 +107,7 @@ void demucsonnx::istft(struct stft_buffers &stft_buf)
         {
             for (int j = 0; j < stft_buf.nb_frames; ++j)
             {
-                stft_buf.complex_spec_mono[j][i] = stft_buf.spec(channel, i, j);
+                stft_buf.complex_spec_mono[j][i] = spec(channel, i, j);
             }
         }
 
@@ -110,7 +116,7 @@ void demucsonnx::istft(struct stft_buffers &stft_buf)
         istft_inner(stft_buf, cfg);
 
         // copies waveform_mono into stft_buf.waveform past first pad samples
-        stft_buf.waveform.row(channel) = Eigen::Map<Eigen::MatrixXf>(
+        waveform.row(channel) = Eigen::Map<Eigen::MatrixXf>(
             stft_buf.padded_waveform_mono_out.data() + stft_buf.pad, 1,
             stft_buf.padded_waveform_mono_out.size() - FFT_WINDOW_SIZE);
     }

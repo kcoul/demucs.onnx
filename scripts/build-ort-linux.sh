@@ -2,7 +2,7 @@
 
 # copied from <https://github.com/olilarkin/ort-builder>
 
-ONNX_CONFIG="${1:-./ort-model/model.required_operators_and_types.config}"
+ONNX_CONFIG="${1:-./onnx-models/required_operators_and_types.config}"
 CMAKE_BUILD_TYPE=MinSizeRel
 
 build_arch() {

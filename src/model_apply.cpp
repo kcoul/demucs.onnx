@@ -150,8 +150,10 @@ Eigen::Tensor3dXf demucsonnx::demucs_inference(
             {
                 for (int k = 0; k < chunk_length; ++k)
                 {
+                    auto kidx = k + symmetric_padding_start;
+                    kidx = std::min(kidx, int(buffers.targets_out.dimension(2)-1));
                     // Undoing center_trim by offsetting with left_padding
-                    chunk_out(i, j, k) = buffers.targets_out(i, j, k + symmetric_padding_start);
+                    chunk_out(i, j, k) = buffers.targets_out(i, j, kidx);
                 }
             }
         }

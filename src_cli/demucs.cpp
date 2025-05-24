@@ -148,6 +148,10 @@ int main(int argc, const char **argv)
     // load audio passed as argument
     std::string wav_file = argv[2];
 
+    // strip extension to make prefix for output filenames
+    std::filesystem::path output_file_prefix = wav_file;
+    output_file_prefix.replace_extension();
+
     // output dir passed as argument
     std::string out_dir = argv[3];
 
@@ -191,9 +195,9 @@ int main(int argc, const char **argv)
 
     // max out threads and increase performance to the max on my beefy
     // desktop CPU
-    session_options.SetExecutionMode(ExecutionMode::ORT_PARALLEL);
-    session_options.SetIntraOpNumThreads(16);
-    session_options.SetInterOpNumThreads(16);
+    session_options.SetExecutionMode(ExecutionMode::ORT_SEQUENTIAL);
+    session_options.SetIntraOpNumThreads(0);
+    session_options.SetInterOpNumThreads(1);
 
     // General optimizations
     session_options.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
@@ -203,9 +207,16 @@ int main(int argc, const char **argv)
         session_options
     );
 
+    auto preProcessingTime = std::chrono::high_resolution_clock::now();
+
     // create 4 audio matrix same size, to hold output
     Eigen::Tensor3dXf audio_targets =
         demucsonnx::demucs_inference(model, audio, progressCallback);
+
+    auto postProcessingTime = std::chrono::high_resolution_clock::now();
+    auto processingTime =
+            std::chrono::duration_cast<std::chrono::milliseconds>(postProcessingTime - preProcessingTime);
+    std::cout << "Stems split in " << std::format("{:%M:%S}", processingTime) << "s" << std::endl;
 
     out_targets = audio_targets;
 
@@ -256,7 +267,7 @@ int main(int argc, const char **argv)
 
         // insert target_name into the path after the digit
         // e.g. target_name_0_drums.wav
-        p_target.replace_filename("target_" + std::to_string(target) + "_" +
+        p_target.replace_filename(output_file_prefix.string() + "_" + std::to_string(target) + "_" +
                                   target_name + ".wav");
 
         std::cout << "Writing wav file " << p_target << std::endl;

@@ -107,7 +107,7 @@ Model successfully converted to ONNX format at onnx-models/htdemucs.onnx
 
 You can convert the 4-source, 6-source, and fine-tuned models. Then, convert ONNX to ORT:
 ```
-$ ./scripts/convert-model-to-ort.sh 
+$ ./scripts/convert-model-to-ort.sh ./demucs-onnx
 ...
 Converting optimized ONNX model /home/sevagh/repos/demucs.onnx/onnx-models/htdemucs.onnx to ORT format model /home/sevagh/repos/demucs.onnx/onnx-models/tmpmp673xjb.without_runtime_opt/htdemucs.ort
 Converted 1/1 models successfully.

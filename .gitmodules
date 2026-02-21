@@ -9,7 +9,7 @@
 	url = https://github.com/microsoft/onnxruntime
 [submodule "vendor/ort-builder"]
 	path = vendor/ort-builder
-	url = git@github.com:olilarkin/ort-builder
+	url = https://github.com/kcoul/ort-builder.git
 [submodule "vendor/demucs"]
 	path = vendor/demucs
 	url = https://github.com/sevagh/demucs
